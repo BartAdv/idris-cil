@@ -33,23 +33,14 @@ assemblyName = do
   char ']'
   return asm
 
-qualifiedName :: Parser (String, String)
-qualifiedName = do
-  maybeAssemblyName <- optionMaybe assemblyName
-  typeName <- many1 anyChar
-  return (fromMaybe "mscorlib" maybeAssemblyName, typeName)
-
-parseReferenceType :: String -> PrimitiveType
-parseReferenceType t =
-  case parse qualifiedName "type name" t of
-    Left e -> error $ show e
-    Right (asm, typeName) -> ReferenceType asm typeName
-
 foreignTypeToCilType :: FDesc -> PrimitiveType
-foreignTypeToCilType (FApp (UN (unpack -> "CIL_RefT")) [FStr qname, _, _]) = parseReferenceType qname
-foreignTypeToCilType (FApp t _) = foreignType t
+foreignTypeToCilType (FApp (UN (unpack -> "CIL_RawT")) [FApp (UN (unpack -> "CILTyRef")) [FStr assembly, FStr typeName], _, _]) =
+  ReferenceType assembly typeName
+foreignTypeToCilType (FApp (UN (unpack -> "CIL_IntT")) _) = Int32
+--foreignTypeToCilType (FApp t _) = foreignType t
 foreignTypeToCilType (FCon t)   = foreignType t
 foreignTypeToCilType (FIO t)    = foreignTypeToCilType t
+foreignTypeToCilType d          = error $ "Unsupported foreign descriptor: " ++ show d
 
 foreignType :: Name -> PrimitiveType
 foreignType (UN typeName) =

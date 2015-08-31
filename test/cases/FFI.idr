@@ -6,16 +6,15 @@ System.String exportedBoolToString(Boolean)
 -}
 module Main
 
-data RuntimeType = MkRuntimeType
-data Assembly    = MkAssembly
-data MethodInfo  = MkMethodInfo
+data CILTy = CILTyRef String String -- a foreign reference type
+           | CILTyVal String String -- a foreign value type
+
+class ToCIL t where
+  toCIL : CILTy
 
 mutual
-  -- TODO: how to get rid of these hardcoded constructors?
-  data CIL_RefTypes : String -> Type -> Type where
-       CIL_Assembly : CIL_RefTypes "System.Reflection.Assembly" Assembly
-       CIL_Type     : CIL_RefTypes "System.Type" RuntimeType
-       CIL_Method   : CIL_RefTypes "System.Reflection.MethodInfo" MethodInfo
+  data CIL_RawTypes : CILTy -> Type -> Type where
+       CIL_RawType  : ToCIL r => (x : r) -> CIL_RawTypes (toCIL {t=r}) r
 
   data CIL_IntTypes  : Type -> Type where
        CIL_IntChar   : CIL_IntTypes Char
@@ -28,7 +27,7 @@ mutual
        CIL_Bool  : CIL_Types Bool
        CIL_Unit  : CIL_Types ()
        CIL_IntT  : CIL_IntTypes i -> CIL_Types i
-       CIL_RefT  : CIL_RefTypes n t -> CIL_Types t
+       CIL_RawT  : CIL_RawTypes r t -> CIL_Types t
   --   CIL_FnT   : CIL_FnTypes a -> CIL_Types (CilFn a)
 
   -- data CilFn t = MkCilFn t
@@ -43,61 +42,97 @@ FFI_CIL = MkFFI CIL_Types String Type
 CIL_IO : Type -> Type
 CIL_IO a = IO' FFI_CIL a
 
+-- FFI can be made type safe by declaring singleton types to
+-- represent the foreign CIL types and using them in all FFI signatures.
+--
+-- The internal type is bound to their CIL counterpart via the ToCIL class.
+--
+%inline
+corlib : String -> CILTy
+corlib = CILTyRef "mscorlib"
+
+data Object = MkObject
+instance ToCIL Object where
+  toCIL = corlib "System.Object"
+
+data RuntimeType = MkRuntimeType
+instance ToCIL RuntimeType where
+  toCIL = corlib "System.Type"
+
+data Assembly = MkAssembly
+instance ToCIL Assembly where
+  toCIL = corlib "System.Reflection.Assembly"
+
+data MethodInfo = MkMethodInfo
+instance ToCIL MethodInfo where
+  toCIL = corlib "System.Reflection.MethodInfo"
+
+-- inheritance can be encoded as class instances or implicit conversions
+class IsA a b where {}
+instance IsA Object MethodInfo where {}
+
+-- implicit MethodInfoIsAObject : MethodInfo -> Object
+-- MethodInfoIsAObject m = (believe_me m)
+
+GetExecutingAssembly : CIL_IO Assembly
+GetExecutingAssembly =
+  foreign FFI_CIL
+    "[mscorlib]System.Reflection.Assembly::GetExecutingAssembly"
+    (CIL_IO Assembly)
+
+GetType : Assembly -> String -> Bool -> CIL_IO RuntimeType
+GetType =
+  foreign FFI_CIL
+    "instance [mscorlib]System.Reflection.Assembly::GetType"
+    (Assembly -> String -> Bool -> CIL_IO RuntimeType)
+
+GetMethod : RuntimeType -> String -> CIL_IO MethodInfo
+GetMethod =
+  foreign FFI_CIL
+    "instance [mscorlib]System.Type::GetMethod"
+    (RuntimeType -> String -> CIL_IO MethodInfo)
+
+ToString : IsA Object o => o -> CIL_IO String
+ToString o =
+  foreign FFI_CIL
+    "instance [mscorlib]System.Object::ToString"
+    (Object -> CIL_IO String)
+    (believe_me o)
+
 exportedIO : CIL_IO ()
 exportedIO = putStrLn "exported!"
 
 exportedBoolToString : Bool -> String
 exportedBoolToString = show
 
+-- can't be exported because (ToCIL RuntimeType) is not evaluated in the export descriptor
+showMethod : RuntimeType -> String -> CIL_IO ()
+showMethod t n = do m <- t `GetMethod` n
+                    ToString m >>= putStrLn
+
 exports : FFI_Export FFI_CIL "" [] -- export under current module's namespace
 exports = Fun exportedIO "VoidFunction" $ -- export function under different name
           Fun exportedBoolToString "" $ -- export function under original name
+--          Fun showMethod ""  -- doesn't work becase toCIL applications are not evaluated
           End
 
-systemMax : Int -> Int -> CIL_IO Int
-systemMax =
+Max : Int -> Int -> CIL_IO Int
+Max =
   foreign FFI_CIL
     "[mscorlib]System.Math::Max"
     (Int -> Int -> CIL_IO Int)
 
-substring : String -> Int -> Int -> CIL_IO String
-substring this index count =
+Substring : String -> Int -> Int -> CIL_IO String
+Substring this index count =
   foreign FFI_CIL
     "instance [mscorlib]System.String::Substring"
     (String -> Int -> Int -> CIL_IO String)
     this index count
 
-getExecutingAssembly : CIL_IO Assembly
-getExecutingAssembly =
-  foreign FFI_CIL
-    "[mscorlib]System.Reflection.Assembly::GetExecutingAssembly"
-    (CIL_IO Assembly)
-
-getType : Assembly -> String -> Bool -> CIL_IO RuntimeType
-getType =
-  foreign FFI_CIL
-    "instance [mscorlib]System.Reflection.Assembly::GetType"
-    (Assembly -> String -> Bool -> CIL_IO RuntimeType)
-
-getMethod : RuntimeType -> String -> CIL_IO MethodInfo
-getMethod =
-  foreign FFI_CIL
-    "instance [mscorlib]System.Type::GetMethod"
-    (RuntimeType -> String -> CIL_IO MethodInfo)
-
-MethodInfoToString : MethodInfo -> CIL_IO String
-MethodInfoToString =
-  foreign FFI_CIL
-    "instance [mscorlib]System.Object::ToString"
-    (MethodInfo -> CIL_IO String)
-
 main : CIL_IO ()
-main = do systemMax 42 1 >>= printLn
-          substring "idris" 2 1 >>= putStrLn
-          asm <- getExecutingAssembly
-          type <- getType asm "Main" True
+main = do Max 42 1 >>= printLn
+          Substring "idris" 2 1 >>= putStrLn
+          asm <- GetExecutingAssembly
+          type <- GetType asm "Main" True
           for_ ["VoidFunction", "exportedBoolToString"] $
             showMethod type
-  where showMethod : RuntimeType -> String -> CIL_IO ()
-        showMethod t n = do m <- t `getMethod` n
-                            MethodInfoToString m >>= putStrLn
