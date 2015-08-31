@@ -34,10 +34,10 @@ assemblyName = do
   return asm
 
 foreignTypeToCilType :: FDesc -> PrimitiveType
-foreignTypeToCilType (FApp (UN (unpack -> "CIL_RawT")) [FApp (UN (unpack -> "CILTyRef")) [FStr assembly, FStr typeName], _, _]) =
-  ReferenceType assembly typeName
+foreignTypeToCilType (FApp (UN (unpack -> "CIL_CILT"))
+                      [FApp (UN (unpack -> "CILTyRef"))
+                       [FStr assembly, FStr typeName]]) = ReferenceType assembly typeName
 foreignTypeToCilType (FApp (UN (unpack -> "CIL_IntT")) _) = Int32
---foreignTypeToCilType (FApp t _) = foreignType t
 foreignTypeToCilType (FCon t)   = foreignType t
 foreignTypeToCilType (FIO t)    = foreignTypeToCilType t
 foreignTypeToCilType d          = error $ "Unsupported foreign descriptor: " ++ show d

@@ -3,19 +3,27 @@
 r
 Void VoidFunction()
 System.String exportedBoolToString(Boolean)
+Void showMethod(System.Type, System.String)
 -}
 module Main
 
-data CILTy = CILTyRef String String -- a foreign reference type
-           | CILTyVal String String -- a foreign value type
+||| The universe of CIL type descriptors.
+data CILTy =
+  ||| a foreign reference type
+  CILTyRef String String |
+  ||| a foreign value type
+  CILTyVal String String
 
-class ToCIL t where
-  toCIL : CILTy
+instance Eq CILTy where
+  (CILTyRef ns t) == (CILTyRef ns' t') = ns == ns' && t == t'
+  (CILTyVal ns t) == (CILTyVal ns' t') = ns == ns' && t == t'
+  _               == _                 = False
+
+||| A foreign CIL type.
+data CIL   : CILTy -> Type where
+     MkCIL : (ty: CILTy) -> CIL ty
 
 mutual
-  data CIL_RawTypes : CILTy -> Type -> Type where
-       CIL_RawType  : ToCIL r => (x : r) -> CIL_RawTypes (toCIL {t=r}) r
-
   data CIL_IntTypes  : Type -> Type where
        CIL_IntChar   : CIL_IntTypes Char
        CIL_IntNative : CIL_IntTypes Int
@@ -27,7 +35,7 @@ mutual
        CIL_Bool  : CIL_Types Bool
        CIL_Unit  : CIL_Types ()
        CIL_IntT  : CIL_IntTypes i -> CIL_Types i
-       CIL_RawT  : CIL_RawTypes r t -> CIL_Types t
+       CIL_CILT  : CIL_Types (CIL t)
   --   CIL_FnT   : CIL_FnTypes a -> CIL_Types (CilFn a)
 
   -- data CilFn t = MkCilFn t
@@ -42,30 +50,21 @@ FFI_CIL = MkFFI CIL_Types String Type
 CIL_IO : Type -> Type
 CIL_IO a = IO' FFI_CIL a
 
--- FFI can be made type safe by declaring singleton types to
--- represent the foreign CIL types and using them in all FFI signatures.
---
--- The internal type is bound to their CIL counterpart via the ToCIL class.
---
 %inline
-corlib : String -> CILTy
-corlib = CILTyRef "mscorlib"
+corlib : String -> Type
+corlib = CIL . CILTyRef "mscorlib"
 
-data Object = MkObject
-instance ToCIL Object where
-  toCIL = corlib "System.Object"
+Object : Type
+Object = corlib "System.Object"
 
-data RuntimeType = MkRuntimeType
-instance ToCIL RuntimeType where
-  toCIL = corlib "System.Type"
+Assembly : Type
+Assembly = corlib "System.Reflection.Assembly"
 
-data Assembly = MkAssembly
-instance ToCIL Assembly where
-  toCIL = corlib "System.Reflection.Assembly"
+RuntimeType : Type
+RuntimeType = corlib "System.Type"
 
-data MethodInfo = MkMethodInfo
-instance ToCIL MethodInfo where
-  toCIL = corlib "System.Reflection.MethodInfo"
+MethodInfo : Type
+MethodInfo = corlib "System.Reflection.MethodInfo"
 
 -- inheritance can be encoded as class instances or implicit conversions
 class IsA a b where {}
@@ -105,7 +104,6 @@ exportedIO = putStrLn "exported!"
 exportedBoolToString : Bool -> String
 exportedBoolToString = show
 
--- can't be exported because (ToCIL RuntimeType) is not evaluated in the export descriptor
 showMethod : RuntimeType -> String -> CIL_IO ()
 showMethod t n = do m <- t `GetMethod` n
                     ToString m >>= putStrLn
@@ -113,7 +111,7 @@ showMethod t n = do m <- t `GetMethod` n
 exports : FFI_Export FFI_CIL "" [] -- export under current module's namespace
 exports = Fun exportedIO "VoidFunction" $ -- export function under different name
           Fun exportedBoolToString "" $ -- export function under original name
---          Fun showMethod ""  -- doesn't work becase toCIL applications are not evaluated
+          Fun showMethod ""  -- export signature containing CIL type
           End
 
 Max : Int -> Int -> CIL_IO Int
@@ -134,5 +132,5 @@ main = do Max 42 1 >>= printLn
           Substring "idris" 2 1 >>= putStrLn
           asm <- GetExecutingAssembly
           type <- GetType asm "Main" True
-          for_ ["VoidFunction", "exportedBoolToString"] $
+          for_ ["VoidFunction", "exportedBoolToString", "showMethod"] $
             showMethod type
