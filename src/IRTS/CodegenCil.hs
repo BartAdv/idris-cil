@@ -28,7 +28,10 @@ import           Language.Cil
 import qualified Language.Cil as Cil
 
 import           IRTS.Cil.FFI
+import           IRTS.Cil.Inference
 --import           IRTS.Cil.UnreachableCodeRemoval
+
+import Debug.Trace
 
 codegenCil :: CodeGenerator
 codegenCil ci = do writeFileUTF8 cilFile cilText
@@ -61,6 +64,9 @@ moduleFor :: CodegenInfo -> DelegateWriter TypeDef
 moduleFor ci = do methods <- mapM method declsWithBody
                   return $ classDef [CaPrivate] moduleName noExtends noImplements [] methods []
   where declsWithBody = filter hasBody decls
+        tdecls        = inferDecls declsWithBody
+        methods       = trace ("TypedDecls: " ++ (show $ zip fnames tdecls)) $ map method declsWithBody -- removeUnreachable $ map method declsWithBody
+        fnames        = map (\(SFun name _ _ _) -> name) declsWithBody
         decls         = map snd $ simpleDecls ci
         hasBody (SFun _ _ _ SNothing) = False
         hasBody _                     = True
